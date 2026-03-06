@@ -63,6 +63,18 @@ const res = await fetch(`${apiUrl}/screenshot?url=${encodeURIComponent(url)}&wid
 
 Configura `SCREENSHOT_API_URL` en producción con la URL pública de este servicio.
 
+## Despliegue en CapRover
+
+El proyecto incluye `Dockerfile` y `captain-definition` listos para CapRover.
+
+1. Crea una nueva app en CapRover (ej. `screenshot-api`).
+2. Conecta el repo (GitHub/GitLab) o despliega con `caprover deploy`.
+3. CapRover detectará el `captain-definition` y construirá la imagen con el Dockerfile.
+4. La app escucha en el puerto que CapRover asigne (por defecto 80).
+5. Configura el dominio en CapRover (ej. `screenshot-api.tudominio.com`).
+
+**Nota:** La primera captura puede tardar unos segundos mientras Chromium arranca. Si Chromium falla, revisa en CapRover → App Configs que el contenedor tenga memoria suficiente (recomendado ≥512 MB).
+
 ## Licencia
 
 ISC
