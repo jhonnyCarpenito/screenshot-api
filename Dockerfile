@@ -41,6 +41,8 @@ COPY . .
 
 # CapRover inyecta PORT; por defecto 80
 ENV PORT=80
+# Define REDIS_URL en App Configs de CapRover para habilitar caché compartida.
+ENV REDIS_URL=""
 EXPOSE 80
 
 # Healthcheck para CapRover

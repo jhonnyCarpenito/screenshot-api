@@ -1,9 +1,13 @@
 import express from 'express';
 import cors from 'cors';
+import PQueue from 'p-queue';
 import { captureScreenshot } from './capture.js';
+import { config } from './config.js';
+import { closeBrowser, initBrowser } from './browserManager.js';
+import { disconnectCache, getCachedScreenshot, initCache, setCachedScreenshot } from './cache.js';
 
 const app = express();
-const PORT = process.env.PORT || 4000;
+const queue = new PQueue({ concurrency: config.concurrency });
 
 app.use(cors());
 app.use(express.json());
@@ -22,6 +26,7 @@ function isValidUrl(string) {
  * Query: url (required), width, height, format=jpeg|png, fullPage=true|false
  */
 app.get('/screenshot', async (req, res) => {
+  const requestStartedAt = Date.now();
   const url = req.query.url;
   if (!url || typeof url !== 'string') {
     return res.status(400).json({ error: 'Query "url" is required' });
@@ -35,21 +40,33 @@ app.get('/screenshot', async (req, res) => {
   const height = Math.min(Number(req.query.height) || 800, 1080);
   const format = req.query.format === 'png' ? 'png' : 'jpeg';
   const fullPage = req.query.fullPage === 'true';
+  const cacheOptions = { url, width, height, format, fullPage };
 
   try {
-    const buffer = await captureScreenshot(url, {
-      width,
-      height,
-      format,
-      fullPage,
-      timeout: 20000,
-    });
+    let cacheStatus = 'MISS';
+    let buffer = await getCachedScreenshot(cacheOptions);
+    if (buffer) {
+      cacheStatus = 'HIT';
+    } else {
+      buffer = await queue.add(() =>
+        captureScreenshot(url, {
+          width,
+          height,
+          format,
+          fullPage,
+          timeout: config.screenshotTimeout,
+        }),
+      );
+      await setCachedScreenshot(cacheOptions, buffer);
+    }
 
     const contentType = format === 'png' ? 'image/png' : 'image/jpeg';
     res.set({
       'Content-Type': contentType,
       'Cache-Control': 'public, max-age=86400',
       'Content-Length': buffer.length,
+      'X-Cache': cacheStatus,
+      'X-Response-Time': `${Date.now() - requestStartedAt}ms`,
     });
     res.end(buffer, 'binary');
   } catch (err) {
@@ -65,6 +82,31 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok' });
 });
 
-app.listen(PORT, () => {
-  console.log(`Screenshot API listening on http://localhost:${PORT}`);
+async function start() {
+  await initBrowser();
+  await initCache();
+
+  app.listen(config.port, () => {
+    console.log(`Screenshot API listening on http://localhost:${config.port}`);
+  });
+}
+
+async function shutdown(signal) {
+  console.log(`Received ${signal}. Shutting down resources...`);
+  await Promise.allSettled([disconnectCache(), closeBrowser()]);
+  process.exit(0);
+}
+
+process.on('SIGINT', () => {
+  void shutdown('SIGINT');
 });
+process.on('SIGTERM', () => {
+  void shutdown('SIGTERM');
+});
+
+try {
+  await start();
+} catch (err) {
+  console.error('Failed to start screenshot API', err);
+  process.exit(1);
+}

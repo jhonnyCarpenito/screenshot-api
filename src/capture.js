@@ -1,10 +1,9 @@
-import { chromium } from 'playwright-extra';
-import StealthPlugin from 'puppeteer-extra-plugin-stealth';
-
-chromium.use(StealthPlugin());
+import { getContext } from './browserManager.js';
+import { config } from './config.js';
 
 const DEFAULT_VIEWPORT = { width: 1280, height: 800 };
-const DEFAULT_TIMEOUT = 15000;
+const DEFAULT_TIMEOUT = config.screenshotTimeout;
+const TRACKING_PATTERN = /google-analytics|gtag|facebook|hotjar|doubleclick|segment|clarity/i;
 
 /**
  * Captura un screenshot de la URL dada.
@@ -22,43 +21,45 @@ export async function captureScreenshot(url, options = {}) {
     timeout = DEFAULT_TIMEOUT,
   } = options;
 
-  const browser = await chromium.launch({
-    headless: true,
-    args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-dev-shm-usage',
-      '--disable-blink-features=AutomationControlled',
-      '--disable-features=IsolateOrigins,site-per-process',
-    ],
+  const context = await getContext({
+    viewport: { width, height },
+    ignoreHTTPSErrors: true,
+    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    locale: 'es-ES',
+    timezoneId: 'Europe/Madrid',
   });
-
   try {
-    const context = await browser.newContext({
-      viewport: { width, height },
-      ignoreHTTPSErrors: true,
-      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      locale: 'es-ES',
-      timezoneId: 'Europe/Madrid',
+    await context.route('**/*', (route) => {
+      const request = route.request();
+      const type = request.resourceType();
+      if (['font', 'media', 'websocket'].includes(type)) {
+        return route.abort();
+      }
+      if (TRACKING_PATTERN.test(request.url())) {
+        return route.abort();
+      }
+      return route.continue();
     });
 
     const page = await context.newPage();
     await page.goto(url, {
-      waitUntil: 'load',
+      waitUntil: 'domcontentloaded',
       timeout,
     });
-    // Dar tiempo a pintado y, si hay Cloudflare, a que resuelva la verificación automática
-    await new Promise((r) => setTimeout(r, 2500));
+    try {
+      await page.waitForLoadState('networkidle', { timeout: config.networkIdleTimeout });
+    } catch {
+      // No todas las páginas alcanzan networkidle rápidamente; capturamos igual.
+    }
 
     const buffer = await page.screenshot({
       type: format,
       fullPage,
-      ...(format === 'jpeg' ? { quality: 90 } : {}),
+      ...(format === 'jpeg' ? { quality: config.jpegQuality } : {}),
     });
 
-    await context.close();
     return Buffer.from(buffer);
   } finally {
-    await browser.close();
+    if (context) await context.close();
   }
 }
