@@ -4,7 +4,16 @@ import PQueue from 'p-queue';
 import { captureScreenshot } from './capture.js';
 import { config } from './config.js';
 import { closeBrowser, initBrowser } from './browserManager.js';
-import { disconnectCache, getCachedScreenshot, initCache, setCachedScreenshot } from './cache.js';
+import {
+  deleteCachedScreenshot,
+  disconnectCache,
+  getCachedScreenshot,
+  initCache,
+  releaseRevalidateLock,
+  setCachedScreenshot,
+  tryAcquireRevalidateLock,
+} from './cache.js';
+import { originContentChanged } from './revalidate.js';
 
 const app = express();
 const queue = new PQueue({ concurrency: config.concurrency });
@@ -19,6 +28,29 @@ function isValidUrl(string) {
   } catch {
     return false;
   }
+}
+
+function scheduleBackgroundRevalidate(url, cacheOptions, meta) {
+  setImmediate(() => {
+    void (async () => {
+      if (!config.revalidateEnabled) return;
+      const etag = meta?.etag;
+      const lastModified = meta?.lastModified;
+      if (!etag && !lastModified) return;
+
+      const acquired = await tryAcquireRevalidateLock(cacheOptions);
+      if (!acquired) return;
+
+      try {
+        const changed = await originContentChanged(url, { etag, lastModified });
+        if (changed) await deleteCachedScreenshot(cacheOptions);
+      } catch (err) {
+        console.error('[revalidate]', err.message);
+      } finally {
+        await releaseRevalidateLock(cacheOptions);
+      }
+    })();
+  });
 }
 
 /**
@@ -43,29 +75,40 @@ app.get('/screenshot', async (req, res) => {
   const cacheOptions = { url, width, height, format, fullPage };
 
   try {
-    let cacheStatus = 'MISS';
-    let buffer = await getCachedScreenshot(cacheOptions);
-    if (buffer) {
-      cacheStatus = 'HIT';
-    } else {
-      buffer = await queue.add(() =>
-        captureScreenshot(url, {
-          width,
-          height,
-          format,
-          fullPage,
-          timeout: config.screenshotTimeout,
-        }),
-      );
-      await setCachedScreenshot(cacheOptions, buffer);
+    const cached = await getCachedScreenshot(cacheOptions);
+
+    if (cached) {
+      const contentType = format === 'png' ? 'image/png' : 'image/jpeg';
+      res.set({
+        'Content-Type': contentType,
+        'Cache-Control': 'public, max-age=86400',
+        'Content-Length': cached.buffer.length,
+        'X-Cache': 'HIT',
+        'X-Response-Time': `${Date.now() - requestStartedAt}ms`,
+        'X-Revalidate': 'scheduled',
+      });
+      res.end(cached.buffer, 'binary');
+      scheduleBackgroundRevalidate(url, cacheOptions, cached.meta);
+      return;
     }
+
+    const { buffer, validators } = await queue.add(() =>
+      captureScreenshot(url, {
+        width,
+        height,
+        format,
+        fullPage,
+        timeout: config.screenshotTimeout,
+      }),
+    );
+    await setCachedScreenshot(cacheOptions, buffer, validators, config.cacheTtlSeconds);
 
     const contentType = format === 'png' ? 'image/png' : 'image/jpeg';
     res.set({
       'Content-Type': contentType,
       'Cache-Control': 'public, max-age=86400',
       'Content-Length': buffer.length,
-      'X-Cache': cacheStatus,
+      'X-Cache': 'MISS',
       'X-Response-Time': `${Date.now() - requestStartedAt}ms`,
     });
     res.end(buffer, 'binary');

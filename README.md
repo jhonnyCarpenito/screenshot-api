@@ -46,7 +46,27 @@ GET http://localhost:4000/screenshot?url=https://example.com&width=800&height=50
 
 Respuesta: imagen (Content-Type: image/jpeg o image/png) con cabecera `Cache-Control: public, max-age=86400`.
 
+Cabeceras útiles:
+
+- `X-Cache`: `HIT` si la imagen vino de Redis, `MISS` si se generó con Playwright.
+- `X-Response-Time`: tiempo aproximado del request en el servidor.
+- `X-Revalidate: scheduled`: solo en `HIT`; indica que se programó una comprobación en segundo plano contra el origen (no retrasa la respuesta).
+
 En caso de error: 400 (URL inválida) o 502 (fallo al capturar), body JSON con `error` y opcionalmente `detail`.
+
+## Caché en Redis y revalidación
+
+La API puede guardar la imagen en Redis y metadatos HTTP (`ETag` / `Last-Modified`) obtenidos al navegar con Playwright.
+
+| Variable | Descripción |
+|----------|-------------|
+| `REDIS_URL` | URL de conexión Redis (ej. `redis://:password@host:6379`). |
+| `CACHE_TTL` | Segundos de vida de la entrada en Redis. **`0` = sin caducidad** (no se usa `EX`; persiste hasta borrado o invalidación). Por defecto `1800` (30 min). |
+| `REVALIDATE_ENABLED` | `true`/`false`. Si es `true`, tras cada respuesta **HIT** se lanza en background un `HEAD` (o `GET` condicional si el servidor no admite `HEAD`) para detectar cambios y **borrar** la clave en Redis si el origen indica recurso modificado. No bloquea la respuesta al cliente. |
+| `REVALIDATE_LOCK_SECONDS` | Evita tormentas de peticiones concurrentes al mismo recurso (lock por clave de caché). Por defecto `30`. |
+| `REVALIDATE_REQUEST_TIMEOUT_MS` | Timeout por petición de revalidación. Por defecto `10000`. |
+
+**Limitaciones:** muchos sitios no envían `ETag`/`Last-Modified` fiables en el documento HTML, o el contenido visible depende de JavaScript; en esos casos no habrá revalidación automática (no hay validadores guardados) y la imagen solo cambiará si caduca el TTL o borras la clave en Redis. La miniatura puede quedar “vieja” hasta la **siguiente** petición que complete el chequeo en background tras un cambio real en el origen.
 
 ### GET /health
 
@@ -74,6 +94,8 @@ El proyecto incluye `Dockerfile` y `captain-definition` listos para CapRover.
 5. Configura el dominio en CapRover (ej. `screenshot-api.tudominio.com`).
 
 **Nota:** La primera captura puede tardar unos segundos mientras Chromium arranca. Si Chromium falla, revisa en CapRover → App Configs que el contenedor tenga memoria suficiente (recomendado ≥512 MB).
+
+Configura `REDIS_URL` y, si quieres caché sin caducidad en Redis, `CACHE_TTL=0` (ver sección anterior).
 
 ## Licencia
 

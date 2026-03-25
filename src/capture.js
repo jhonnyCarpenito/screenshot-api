@@ -10,7 +10,7 @@ const TRACKING_PATTERN = /google-analytics|gtag|facebook|hotjar|doubleclick|segm
  * Usa playwright-extra + stealth para reducir detección (p. ej. Cloudflare).
  * @param {string} url - URL del sitio (debe ser absoluta y http/https)
  * @param {object} options - { width, height, format: 'jpeg'|'png', fullPage }
- * @returns {Promise<Buffer>} Buffer de la imagen
+ * @returns {Promise<{ buffer: Buffer, validators: { etag?: string, lastModified?: string } }>}
  */
 export async function captureScreenshot(url, options = {}) {
   const {
@@ -42,10 +42,15 @@ export async function captureScreenshot(url, options = {}) {
     });
 
     const page = await context.newPage();
-    await page.goto(url, {
+    const response = await page.goto(url, {
       waitUntil: 'domcontentloaded',
       timeout,
     });
+
+    const headers = response?.headers() ?? {};
+    const etag = headers.etag || headers.ETag || undefined;
+    const lastModified = headers['last-modified'] || headers['Last-Modified'] || undefined;
+
     try {
       await page.waitForLoadState('networkidle', { timeout: config.networkIdleTimeout });
     } catch {
@@ -58,7 +63,13 @@ export async function captureScreenshot(url, options = {}) {
       ...(format === 'jpeg' ? { quality: config.jpegQuality } : {}),
     });
 
-    return Buffer.from(buffer);
+    return {
+      buffer: Buffer.from(buffer),
+      validators: {
+        ...(etag ? { etag: String(etag) } : {}),
+        ...(lastModified ? { lastModified: String(lastModified) } : {}),
+      },
+    };
   } finally {
     if (context) await context.close();
   }
