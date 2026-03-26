@@ -37,6 +37,7 @@ Genera una captura de la URL indicada.
 | `height` | number  | Alto del viewport (px), máx 1080     | 800         |
 | `format` | string  | `jpeg` o `png`                       | jpeg        |
 | `fullPage` | string | `true` para captura de toda la página | false     |
+| `refresh` | string | `true` para forzar nueva captura (bypass cache) | false |
 
 **Ejemplo**
 
@@ -45,6 +46,16 @@ GET http://localhost:4000/screenshot?url=https://example.com&width=800&height=50
 ```
 
 Respuesta: imagen (Content-Type: image/jpeg o image/png) con cabecera `Cache-Control: public, max-age=86400`.
+
+**Forzar captura (refresh)**
+
+Requiere configurar `SCREENSHOT_API_KEY` en el servidor y enviar `X-API-Key`.
+
+```bash
+curl -s -D- -o /dev/null \
+  -H "X-API-Key: $SCREENSHOT_API_KEY" \
+  "http://localhost:4000/screenshot?url=https%3A%2F%2Fexample.com&width=800&height=500&format=jpeg&refresh=true"
+```
 
 Cabeceras útiles:
 
@@ -62,6 +73,7 @@ La API puede guardar la imagen en Redis y metadatos HTTP (`ETag` / `Last-Modifie
 |----------|-------------|
 | `REDIS_URL` | URL de conexión Redis (ej. `redis://:password@host:6379`). |
 | `CACHE_TTL` | Segundos de vida de la entrada en Redis. **`0` = sin caducidad** (no se usa `EX`; persiste hasta borrado o invalidación). Por defecto `1800` (30 min). |
+| `SCREENSHOT_API_KEY` | Si se define, habilita `refresh=true` y requiere header `X-API-Key` con el mismo valor. |
 | `REVALIDATE_ENABLED` | `true`/`false`. Si es `true`, tras cada respuesta **HIT** se lanza en background un `HEAD` (o `GET` condicional si el servidor no admite `HEAD`) para detectar cambios y **borrar** la clave en Redis si el origen indica recurso modificado. No bloquea la respuesta al cliente. |
 | `REVALIDATE_LOCK_SECONDS` | Evita tormentas de peticiones concurrentes al mismo recurso (lock por clave de caché). Por defecto `30`. |
 | `REVALIDATE_REQUEST_TIMEOUT_MS` | Timeout por petición de revalidación. Por defecto `10000`. |

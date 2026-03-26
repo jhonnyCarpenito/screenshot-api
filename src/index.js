@@ -72,10 +72,21 @@ app.get('/screenshot', async (req, res) => {
   const height = Math.min(Number(req.query.height) || 800, 1080);
   const format = req.query.format === 'png' ? 'png' : 'jpeg';
   const fullPage = req.query.fullPage === 'true';
+  const refresh = req.query.refresh === 'true';
   const cacheOptions = { url, width, height, format, fullPage };
 
   try {
-    const cached = await getCachedScreenshot(cacheOptions);
+    if (refresh) {
+      if (!config.screenshotApiKey) {
+        return res.status(503).json({ error: 'Refresh is not configured on this server' });
+      }
+      const apiKey = req.get('X-API-Key') || '';
+      if (apiKey !== config.screenshotApiKey) {
+        return res.status(403).json({ error: 'Forbidden' });
+      }
+    }
+
+    const cached = refresh ? null : await getCachedScreenshot(cacheOptions);
 
     if (cached) {
       const contentType = format === 'png' ? 'image/png' : 'image/jpeg';
@@ -108,7 +119,7 @@ app.get('/screenshot', async (req, res) => {
       'Content-Type': contentType,
       'Cache-Control': 'public, max-age=86400',
       'Content-Length': buffer.length,
-      'X-Cache': 'MISS',
+      'X-Cache': refresh ? 'REFRESH' : 'MISS',
       'X-Response-Time': `${Date.now() - requestStartedAt}ms`,
     });
     res.end(buffer, 'binary');

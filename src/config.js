@@ -14,6 +14,7 @@ function toBool(value, fallback) {
 export const config = {
   port: toNumber(process.env.PORT, 4000),
   redisUrl: process.env.REDIS_URL || 'redis://:redis123@localhost:6379',
+  screenshotApiKey: process.env.SCREENSHOT_API_KEY || '',
   /** 0 = sin caducidad en Redis (sin EX). >0 = TTL en segundos. */
   cacheTtlSeconds: toNumber(process.env.CACHE_TTL, 1800),
   concurrency: toNumber(process.env.CONCURRENCY, 3),
